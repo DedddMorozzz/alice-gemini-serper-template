@@ -1,5 +1,7 @@
+
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 8;
+const MAX_PENDING_CHARS = 6000;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
@@ -9,19 +11,21 @@ const GEMINI_TIMEOUT_MS = 3000;
 const SYSTEM_PROMPT = [
   "Ты — полезный голосовой помощник в навыке Яндекс Алисы.",
   "Отвечай естественно, по-русски, кратко и так, чтобы ответ было удобно слушать.",
-  "Обычно используй 1–3 коротких предложения. Не используй Markdown, таблицы, списки с символами или длинные вступления.",
+  "Подстраивай подробность под вопрос: на простой отвечай в 1–3 предложениях, на сложный дай содержательное объяснение с фактами и примерами.",
+  "Не задавай встречный вопрос вместо ответа, если можешь ответить по существу. Не используй Markdown, таблицы и длинные вступления.",
+  "Для новостей называй конкретные события и даты, если они подтверждаются предоставленными результатами поиска.",
   "Если вопрос требует актуальных данных и переданы результаты поиска, опирайся на них; не выдумывай отсутствующие факты.",
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
 
-function aliceResponse(text, endSession = false, history = []) {
+function aliceResponse(text, endSession = false, history = [], pending = "") {
   return {
     version: "1.0",
     response: {
       text: fitAliceText(text),
       end_session: endSession
     },
-    session_state: { history }
+    session_state: { history, pending }
   };
 }
 
@@ -43,6 +47,20 @@ function fitAliceText(value) {
 
   const lastSpace = candidate.lastIndexOf(" ");
   return (lastSpace > 200 ? candidate.slice(0, lastSpace) : candidate).trim() + "…";
+}
+
+function splitForAlice(value) {
+  const text = String(value ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+  if (text.length <= MAX_ALICE_TEXT) return [text || "Не удалось подготовить ответ.", ""];
+  const part = text.slice(0, MAX_ALICE_TEXT - 40);
+  const stops = [part.lastIndexOf(". "), part.lastIndexOf("! "), part.lastIndexOf("? ")];
+  const boundary = Math.max(...stops);
+  const cut = boundary > 250 ? boundary + 1 : Math.max(part.lastIndexOf(" "), 250);
+  return [text.slice(0, cut).trim() + " Скажи «продолжай», чтобы услышать дальше.", text.slice(cut).trim().slice(0, MAX_PENDING_CHARS)];
+}
+
+function isContinue(text) {
+  return /^(продолжай|продолжи|дальше|следующ(ая|ую|ее|ее часть)|рассказывай дальше)[.!? ]*$/i.test(text.trim());
 }
 
 function isSearchIntent(text) {
@@ -141,7 +159,8 @@ async function askGemini(text, history, searchContext, timeoutMs) {
         contents,
         generationConfig: {
           temperature: 0.5,
-          maxOutputTokens: 240
+          maxOutputTokens: 700,
+          thinkingConfig: { thinkingLevel: "MINIMAL" }
         }
       })
     },
@@ -209,6 +228,7 @@ export default async function handler(req, res) {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
   const oldHistory = safeHistory(body?.state?.session?.history);
+  const pending = String(body?.state?.session?.pending || "").slice(0, MAX_PENDING_CHARS);
 
   if (!text) {
     return res.status(200).json(aliceResponse(
@@ -216,6 +236,12 @@ export default async function handler(req, res) {
       false,
       oldHistory
     ));
+  }
+
+  if (isContinue(text)) {
+    if (!pending) return res.status(200).json(aliceResponse("Продолжения пока нет. Задай новый вопрос.", false, oldHistory));
+    const [part, rest] = splitForAlice(pending);
+    return res.status(200).json(aliceResponse(part, false, oldHistory, rest));
   }
 
   try {
@@ -238,9 +264,10 @@ export default async function handler(req, res) {
       { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
     ].slice(-MAX_HISTORY_MESSAGES);
 
-    return res.status(200).json(aliceResponse(answer, false, history));
+    const [part, rest] = splitForAlice(answer);
+    return res.status(200).json(aliceResponse(part, false, history, rest));
   } catch (error) {
-    const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;
+    const safeError = error?.name === "AbortError" || /aborted/i.test(error?.message || "") ? new Error("TIME_BUDGET_EXHAUSTED") : error;
     console.warn("Alice webhook returned a fallback response:", safeError?.message || "unknown error");
     return res.status(200).json(aliceResponse(errorForUser(safeError), false, oldHistory));
   }
