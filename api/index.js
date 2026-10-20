@@ -15,6 +15,7 @@ const SYSTEM_PROMPT = [
   "Не задавай встречный вопрос вместо ответа, если можешь ответить по существу. Не используй Markdown, таблицы и длинные вступления.",
   "Для новостей называй конкретные события и даты, если они подтверждаются предоставленными результатами поиска.",
   "Если вопрос требует актуальных данных и переданы результаты поиска, опирайся на них; не выдумывай отсутствующие факты.",
+  "При пересказе новостей называй конкретные события, даты и источники. Не подменяй новости общими сведениями. Если найдено меньше трёх подходящих публикаций, расскажи только о подтверждённых.",
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
 
@@ -87,46 +88,69 @@ async function fetchJson(url, options, timeoutMs) {
   }
 }
 
+
 async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
 
+  const newsIntent = /новост|последн|свеж|событи|news|latest/i.test(query);
+
+  const searchQuery = newsIntent
+    ? query
+        .replace(/найди в интернете|поищи|расскажи о каждой/gi, "")
+        .trim() + " 2026"
+    : query;
+
   try {
     const { response, data } = await fetchJson(
-      "https://google.serper.dev/search",
+      newsIntent
+        ? "https://google.serper.dev/news"
+        : "https://google.serper.dev/search",
       {
         method: "POST",
         headers: {
           "X-API-KEY": key,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 3 })
+        body: JSON.stringify({
+          q: searchQuery,
+          gl: "us",
+          hl: "en",
+          num: 8
+        })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
 
     if (!response.ok) {
-      console.warn("Serper request failed with HTTP", response.status);
+      console.warn("Serper HTTP:", response.status);
       return "";
     }
 
-    const items = (Array.isArray(data.organic) ? data.organic : [])
-      .slice(0, 3)
-      .map((item, i) => {
-        const title = String(item.title || "").slice(0, 180);
-        const snippet = String(item.snippet || "").slice(0, 350);
-        const link = String(item.link || "").slice(0, 240);
-        return `${i + 1}. ${title}: ${snippet} ${link}`.trim();
-      });
+    const results = newsIntent ? data.news : data.organic;
 
-    const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
-    if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
-    return items.length ? items.join("\n") : "";
+    if (!Array.isArray(results) || !results.length) {
+      console.warn("Serper returned no results");
+      return "";
+    }
+
+    return results.slice(0, 6).map((item, index) => {
+      return [
+        `Результат ${index + 1}`,
+        `Заголовок: ${item.title || ""}`,
+        `Дата: ${item.date || "не указана"}`,
+        `Источник: ${item.source || ""}`,
+        `Описание: ${item.snippet || ""}`,
+        `Ссылка: ${item.link || ""}`
+      ].join("\n");
+    }).join("\n\n").slice(0, 6500);
+
   } catch (error) {
-    console.warn("Serper request did not finish in time; continuing without search.");
+    console.warn("Serper error:", error?.message || "unknown");
     return "";
   }
 }
+
 
 async function askGemini(text, history, searchContext, timeoutMs) {
   const key = process.env.GEMINI_API_KEY;
