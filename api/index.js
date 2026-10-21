@@ -168,7 +168,7 @@ async function searchWeb(query, timeoutMs) {
       const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
       if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
     }
-    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: organic.length, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null, undatedSelected: newsIntent ? selected.filter(item => !item.parsedDate).length : null });
+    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: organic.length, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null, undatedSelected: newsIntent ? selected.filter(item => !item.parsedDate).length : null, selectedTitles: newsIntent ? selected.map(item => item.title.slice(0, 100)) : null, selectedDates: newsIntent ? selected.map(item => item.date || "unknown") : null });
     return items.length ? items.join("\n") : "";
   } catch (error) {
     console.warn("SERPER_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
