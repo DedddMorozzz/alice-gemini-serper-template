@@ -4,7 +4,8 @@ const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
 const SERPER_TIMEOUT_MS = 600;
-const GEMINI_TIMEOUT_MS = 2500;
+const GEMINI_TIMEOUT_MS = 3000;
+const RESPONSE_RESERVE_MS = 350;
 
 const SYSTEM_PROMPT = [
   "Ты — полезный голосовой помощник в навыке Яндекс Алисы.",
@@ -73,6 +74,7 @@ async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
 
+  const startedAt = Date.now();
   try {
     const { response, data } = await fetchJson(
       "https://google.serper.dev/search",
@@ -88,7 +90,7 @@ async function searchWeb(query, timeoutMs) {
     );
 
     if (!response.ok) {
-      console.warn("Serper request failed with HTTP", response.status);
+      console.warn("SERPER_DIAGNOSTIC", { status: "http_error", httpStatus: response.status, durationMs: Date.now() - startedAt });
       return "";
     }
 
@@ -103,9 +105,10 @@ async function searchWeb(query, timeoutMs) {
 
     const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
     if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
+    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: items.length });
     return items.length ? items.join("\n") : "";
   } catch (error) {
-    console.warn("Serper request did not finish in time; continuing without search.");
+    console.warn("SERPER_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
     return "";
   }
 }
@@ -128,7 +131,11 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
-  const { response, data } = await fetchJson(
+  const startedAt = Date.now();
+  console.log("GEMINI_REQUEST", { model, timeoutMs: Math.min(GEMINI_TIMEOUT_MS, timeoutMs), historyMessages: contents.length - 1, hasSearchContext: Boolean(searchContext) });
+  let response, data;
+  try {
+    ({ response, data } = await fetchJson(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
@@ -141,16 +148,20 @@ async function askGemini(text, history, searchContext, timeoutMs) {
         contents,
         generationConfig: {
           temperature: 0.5,
-          maxOutputTokens: 240
+          maxOutputTokens: 400
         }
       })
     },
     Math.min(GEMINI_TIMEOUT_MS, timeoutMs)
-  );
+  ));
+  } catch (error) {
+    console.warn("GEMINI_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown", timeoutMs: Math.min(GEMINI_TIMEOUT_MS, timeoutMs) });
+    throw error;
+  }
 
   if (!response.ok) {
     const status = Number(response.status);
-    console.error("Gemini request failed with HTTP", status);
+    console.error("GEMINI_DIAGNOSTIC", { status: "http_error", httpStatus: status, durationMs: Date.now() - startedAt, apiStatus: data?.error?.status || null, apiMessage: String(data?.error?.message || "").slice(0, 300) });
     if (status === 401 || status === 403) throw new Error("GEMINI_KEY_REJECTED");
     if (status === 429) throw new Error("GEMINI_QUOTA");
     throw new Error("GEMINI_REQUEST_FAILED");
@@ -162,6 +173,7 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     .join("")
     .trim();
 
+  console.log("GEMINI_DIAGNOSTIC", { status: answer ? "success" : "empty_answer", durationMs: Date.now() - startedAt, answerChars: answer.length, finishReason: candidate?.finishReason || null });
   if (!answer) {
     if (data?.promptFeedback?.blockReason) throw new Error("GEMINI_BLOCKED");
     throw new Error("GEMINI_EMPTY_RESPONSE");
@@ -225,12 +237,9 @@ export default async function handler(req, res) {
       searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2600)));
     }
 
-    const answer = await askGemini(
-      text,
-      oldHistory,
-      searchContext,
-      Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - 600))
-    );
+    const geminiBudget = Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - RESPONSE_RESERVE_MS));
+    console.log("REQUEST_STAGE", { stage: "gemini", elapsedMs: Date.now() - startedAt, remainingMs: remainingMs(), geminiBudget, searchContextChars: searchContext.length });
+    const answer = await askGemini(text, oldHistory, searchContext, geminiBudget);
 
     const history = [
       ...oldHistory,
@@ -238,10 +247,11 @@ export default async function handler(req, res) {
       { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
     ].slice(-MAX_HISTORY_MESSAGES);
 
+    console.log("REQUEST_DIAGNOSTIC", { status: "success", totalMs: Date.now() - startedAt });
     return res.status(200).json(aliceResponse(answer, false, history));
   } catch (error) {
-    const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;
-    console.warn("Alice webhook returned a fallback response:", safeError?.message || "unknown error");
+    console.warn("REQUEST_DIAGNOSTIC", { status: "fallback", totalMs: Date.now() - startedAt, errorName: error?.name || "unknown", errorCode: error?.message || "unknown" });
+    const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
     return res.status(200).json(aliceResponse(errorForUser(safeError), false, oldHistory));
   }
 }
