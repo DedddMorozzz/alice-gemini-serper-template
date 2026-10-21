@@ -17,16 +17,16 @@ test('Alice response respects length and keeps state', () => {
 });
 test('long response can be continued without losing content', () => {
   const answer = 'Это длинное предложение с пояснением. '.repeat(55);
-  let remainder = answer.replace(/\\s+/g, ' ').trim();
+  let remainder = answer.replace(/\s+/g, ' ').trim();
   let reconstructed = '';
   for (let i=0; i<10 && remainder; i++) {
     const part = splitSpokenAnswer(remainder);
     assert.ok(part.spoken.length <= 1024);
-    reconstructed += part.spoken.replace(/ Скажи «продолжай», чтобы услышать остальное\\.$/, '').trim() + ' ';
+    reconstructed += part.spoken.replace(/ Скажи «продолжай», чтобы услышать остальное\.$/, '').trim() + ' ';
     remainder = part.pending;
   }
   assert.equal(remainder, '');
-  assert.equal(reconstructed.trim().replace(/\\s+/g,' '), answer.trim().replace(/\\s+/g,' '));
+  assert.equal(reconstructed.trim().replace(/\s+/g,' '), answer.trim().replace(/\s+/g,' '));
 });
 test('history filtering', () => {
   assert.deepEqual(safeHistory([{role:'user',text:'привет'}, {role:'invalid',text:'x'}]).map(x=>x.role), ['user']);
