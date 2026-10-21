@@ -222,6 +222,13 @@ export default async function handler(req, res) {
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
   const oldHistory = safeHistory(body?.state?.session?.history);
 
+  console.log("ENV_DIAGNOSTIC", {
+    vercelEnv: process.env.VERCEL_ENV || "unknown",
+    vercelGitCommitSha: (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 12) || null,
+    hasGeminiKey: Boolean(String(process.env.GEMINI_API_KEY || "").trim()),
+    hasSerperKey: Boolean(String(process.env.SERPER_API_KEY || "").trim())
+  });
+
   if (!text) {
     return res.status(200).json(aliceResponse(
       "Привет! Я могу ответить на вопрос или найти актуальную информацию. Что хочешь узнать?",
