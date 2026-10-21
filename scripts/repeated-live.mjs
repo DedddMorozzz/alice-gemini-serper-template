@@ -27,7 +27,8 @@ for (let round = 1; round <= 5; round++) {
       const answer = String(body?.response?.text || '');
       const fallback = /Не успела подготовить ответ|Не удалось получить актуальные данные|Не получилось получить ответ/.test(answer);
       const ok = response.ok && !fallback && answer.length > 0 && answer.length <= 1024;
-      const record = { round, scenario, ok, ms: Math.round(performance.now() - start), chars: answer.length, fallback };
+      const fallbackType = !fallback ? null : /Не удалось получить актуальные данные/.test(answer) ? "search_unavailable" : /Не успела подготовить ответ/.test(answer) ? "gemini_timeout" : "model_error";
+      const record = { round, scenario, ok, ms: Math.round(performance.now() - start), chars: answer.length, fallback, fallbackType };
       records.push(record);
       console.log(JSON.stringify(record));
     } catch (error) {
