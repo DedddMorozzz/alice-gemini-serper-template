@@ -1,0 +1,22 @@
+name: Live answer continuation test
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/gemini-timeouts]
+    paths:
+      - .github/workflows/continuation-live.yml
+      - scripts/continuation-live.mjs
+jobs:
+  continuation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check scripts/continuation-live.mjs
+      - name: Test long answers and continuation
+        env:
+          ALICE_WEBHOOK_URL: https://alice-gemini-serper-template-git-fix-gemini-timeouts-ded-moroz.vercel.app/api
+        run: node scripts/continuation-live.mjs
