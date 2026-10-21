@@ -106,20 +106,26 @@ function parseSearchDate(raw, now = new Date()) {
 function selectRecentNews(items) {
   const now = new Date();
   const seen = new Set();
-  return items.map(item => {
-    const date = parseSearchDate(item.date, now);
-    return { ...item, parsedDate: date };
-  }).filter(item => {
-    if (!item.parsedDate || !item.title || !item.link) return false;
-    const age = now.getTime() - item.parsedDate.getTime();
-    if (age < -86400000 || age > 90 * 86400000) return false;
+  const candidates = items.map(item => ({
+    ...item,
+    parsedDate: parseSearchDate(item.date, now)
+  })).filter(item => {
+    if (!item.title || !item.link) return false;
+    if (item.parsedDate) {
+      const age = now.getTime() - item.parsedDate.getTime();
+      if (age < -86400000 || age > 90 * 86400000) return false;
+    }
     const key = item.title.toLowerCase().replace(/[^a-zа-яё0-9]/gi, "").slice(0, 90);
     const url = item.link.split("?")[0].replace(/\/$/, "");
     if (seen.has(key) || seen.has(url)) return false;
     seen.add(key);
     seen.add(url);
     return true;
-  }).sort((a,b) => b.parsedDate - a.parsedDate).slice(0, 3);
+  });
+  const dated = candidates.filter(item => item.parsedDate)
+    .sort((a, b) => b.parsedDate - a.parsedDate);
+  const undated = candidates.filter(item => !item.parsedDate);
+  return [...dated, ...undated].slice(0, 3);
 }
 
 async function searchWeb(query, timeoutMs) {
@@ -155,13 +161,13 @@ async function searchWeb(query, timeoutMs) {
     }));
     const selected = newsIntent ? selectRecentNews(organic) : organic.slice(0, 6);
     const items = selected.map((item, i) =>
-      `${i + 1}. Заголовок: ${item.title}; Дата: ${item.parsedDate ? item.parsedDate.toISOString().slice(0, 10) : (item.date || "не указана")}; Описание: ${item.snippet}; Источник: ${item.link}`
+      `${i + 1}. Заголовок: ${item.title}; Дата: ${item.parsedDate ? item.parsedDate.toISOString().slice(0, 10) : "не установлена"}; Описание: ${item.snippet}; Источник: ${item.link}`
     );
     if (!newsIntent) {
       const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
       if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
     }
-    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "no_dated_news", durationMs: Date.now() - startedAt, resultsCount: organic.length, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null });
+    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: organic.length, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null, undatedSelected: newsIntent ? selected.filter(item => !item.parsedDate).length : null });
     return items.length ? items.join("\n") : "";
   } catch (error) {
     console.warn("SERPER_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
@@ -184,7 +190,7 @@ async function askGemini(text, history, searchContext, timeoutMs) {
 
   const newsIntent = isNewsIntent(text);
   const prompt = searchContext
-    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Перескажи только отобранные публикации (до трёх), в порядке дат, каждую отдельным коротким предложением. Назови дату и источник каждой публикации, используя только переданные поля. Не объединяй публикации и не придумывай недостающие. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
+    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Перескажи только отобранные публикации (до трёх), каждую отдельным коротким предложением. Назови источник по ссылке, если он очевиден. Если дата не установлена, не называй публикацию самой свежей и не выдумывай дату. Не объединяй публикации и не придумывай недостающие. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
