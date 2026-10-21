@@ -11,7 +11,7 @@ const SYSTEM_PROMPT = [
   "Ты — полезный голосовой помощник в навыке Яндекс Алисы.",
   "Отвечай естественно, по-русски, кратко и так, чтобы ответ было удобно слушать.",
   "Обычно используй 1–3 коротких предложения. Для запроса нескольких новостей допускается по одному-двум предложениям на каждую. Не используй Markdown, таблицы или длинные вступления.",
-  "Если вопрос требует актуальных данных и переданы результаты поиска, опирайся на них; не выдумывай отсутствующие факты.",
+  "Если переданы результаты интернет-поиска, опирайся на них; не выдумывай отсутствующие факты. Если результатов нет, не утверждай, что проверил интернет.",
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
 
@@ -47,7 +47,7 @@ function fitAliceText(value) {
 }
 
 function isSearchIntent(text) {
-  return /\b(latest|today|current|news|weather|price|exchange rate|recent|search|look up)\b|сегодня|сейчас|последн|новост|погод|курс валют|найди|поищи|актуальн|сколько стоит|свежие данные/i.test(text);
+  return /(?:^|[^а-яёa-z])найди(?=\\s|[.,!?;:]|$)/i.test(String(text || ""));
 }
 
 function safeHistory(history) {
@@ -142,7 +142,7 @@ async function searchWeb(query, timeoutMs) {
   if (!key || timeoutMs < 150) return "";
 
   const startedAt = Date.now();
-  const newsIntent = isNewsIntent(query);
+  const newsIntent = false;
   const headers = { "X-API-KEY": key, "Content-Type": "application/json" };
   const request = (endpoint, body) => fetchJson(
     "https://google.serper.dev/" + endpoint,
@@ -213,12 +213,12 @@ async function askGemini(text, history, searchContext, timeoutMs) {
   const model = String(process.env.GEMINI_MODEL || DEFAULT_MODEL).trim();
   if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("INVALID_MODEL_NAME");
 
-  const contents = (isNewsIntent(text) ? [] : safeHistory(history)).map(item => ({
+  const contents = safeHistory(history).map(item => ({
     role: item.role,
     parts: [{ text: item.text }]
   }));
 
-  const newsIntent = isNewsIntent(text);
+  const newsIntent = false;
   const prompt = searchContext
     ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Перескажи только отобранные публикации (до трёх), каждую отдельным коротким предложением. Назови источник по ссылке, если он очевиден. Если дата не установлена, не называй публикацию самой свежей и не выдумывай дату. Не объединяй публикации и не придумывай недостающие. Не добавляй факты из предыдущего диалога или своих знаний; если заголовок описывает ленту новостей, а не событие, пропусти его. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
     : text;
