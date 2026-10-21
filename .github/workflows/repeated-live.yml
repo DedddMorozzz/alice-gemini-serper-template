@@ -5,6 +5,8 @@ on:
     branches: [fix/gemini-timeouts]
     paths:
       - .github/workflows/repeated-live.yml
+      - api/index.js
+      - tests/handler.test.mjs
 jobs:
   repeat:
     runs-on: ubuntu-latest
