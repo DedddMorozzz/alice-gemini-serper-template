@@ -70,11 +70,64 @@ async function fetchJson(url, options, timeoutMs) {
   }
 }
 
+
+function isNewsIntent(text) {
+  return /новост|news/i.test(text);
+}
+
+function parseSearchDate(raw, now = new Date()) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (!value) return null;
+  const iso = value.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  if (iso) {
+    const d = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
+    return d.getUTCFullYear() === +iso[1] && d.getUTCMonth() === +iso[2] - 1 && d.getUTCDate() === +iso[3] ? d : null;
+  }
+  const rel = value.match(/(\d+)\s*(minutes?|hours?|days?|weeks?|months?|минут[а-я]*|час[а-я]*|дн[яей]*|день|недел[а-я]*|месяц[а-я]*)\s*(ago|назад)?/);
+  if (rel) {
+    const n = Number(rel[1]);
+    const unit = rel[2];
+    const days = /minute|минут/.test(unit) ? n / 1440 : /hour|час/.test(unit) ? n / 24 : /week|недел/.test(unit) ? n * 7 : /month|месяц/.test(unit) ? n * 30 : n;
+    return new Date(now.getTime() - days * 86400000);
+  }
+  const months = { january:0,february:1,march:2,april:3,may:4,june:5,july:6,august:7,september:8,october:9,november:10,december:11,января:0,февраля:1,марта:2,апреля:3,мая:4,июня:5,июля:6,августа:7,сентября:8,октября:9,ноября:10,декабря:11 };
+  const monthNames = Object.keys(months).join("|");
+  const en = value.match(new RegExp("\\b(" + monthNames + ")\\s+(\\d{1,2}),?\\s+(20\\d{2})\\b"));
+  const ru = value.match(new RegExp("(\\d{1,2})\\s+(" + monthNames + ")\\s+(20\\d{2})"));
+  const match = en || ru;
+  if (!match) return null;
+  const day = Number(en ? match[2] : match[1]);
+  const month = months[en ? match[1] : match[2]];
+  const year = Number(match[3]);
+  const d = new Date(Date.UTC(year, month, day));
+  return d.getUTCMonth() === month && d.getUTCDate() === day ? d : null;
+}
+
+function selectRecentNews(items) {
+  const now = new Date();
+  const seen = new Set();
+  return items.map(item => {
+    const date = parseSearchDate(item.date, now);
+    return { ...item, parsedDate: date };
+  }).filter(item => {
+    if (!item.parsedDate || !item.title || !item.link) return false;
+    const age = now.getTime() - item.parsedDate.getTime();
+    if (age < -86400000 || age > 90 * 86400000) return false;
+    const key = item.title.toLowerCase().replace(/[^a-zа-яё0-9]/gi, "").slice(0, 90);
+    const url = item.link.split("?")[0].replace(/\/$/, "");
+    if (seen.has(key) || seen.has(url)) return false;
+    seen.add(key);
+    seen.add(url);
+    return true;
+  }).sort((a,b) => b.parsedDate - a.parsedDate).slice(0, 3);
+}
+
 async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
 
   const startedAt = Date.now();
+  const newsIntent = isNewsIntent(query);
   try {
     const { response, data } = await fetchJson(
       "https://google.serper.dev/search",
@@ -84,7 +137,7 @@ async function searchWeb(query, timeoutMs) {
           "X-API-KEY": key,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 6 })
+        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: newsIntent ? 10 : 6 })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
@@ -94,19 +147,21 @@ async function searchWeb(query, timeoutMs) {
       return "";
     }
 
-    const items = (Array.isArray(data.organic) ? data.organic : [])
-      .slice(0, 6)
-      .map((item, i) => {
-        const title = String(item.title || "").slice(0, 180);
-        const snippet = String(item.snippet || "").slice(0, 350);
-        const link = String(item.link || "").slice(0, 240);
-        const date = String(item.date || "").slice(0, 80);
-        return `${i + 1}. Заголовок: ${title}; Дата: ${date || "не указана"}; Описание: ${snippet}; Источник: ${link}`.trim();
-      });
-
-    const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
-    if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
-    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: items.length });
+    const organic = (Array.isArray(data.organic) ? data.organic : []).map(item => ({
+      title: String(item.title || "").slice(0, 180),
+      snippet: String(item.snippet || "").slice(0, 350),
+      link: String(item.link || "").slice(0, 240),
+      date: String(item.date || "").slice(0, 80)
+    }));
+    const selected = newsIntent ? selectRecentNews(organic) : organic.slice(0, 6);
+    const items = selected.map((item, i) =>
+      `${i + 1}. Заголовок: ${item.title}; Дата: ${item.parsedDate ? item.parsedDate.toISOString().slice(0, 10) : (item.date || "не указана")}; Описание: ${item.snippet}; Источник: ${item.link}`
+    );
+    if (!newsIntent) {
+      const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
+      if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
+    }
+    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "no_dated_news", durationMs: Date.now() - startedAt, resultsCount: organic.length, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null });
     return items.length ? items.join("\n") : "";
   } catch (error) {
     console.warn("SERPER_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
@@ -127,9 +182,9 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     parts: [{ text: item.text }]
   }));
 
-  const newsIntent = /новост|news/i.test(text);
+  const newsIntent = isNewsIntent(text);
   const prompt = searchContext
-    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Представь до трёх РАЗНЫХ подтверждённых публикаций, каждую отдельным коротким предложением. Указывай дату и источник только если они присутствуют в результатах. Не объединяй три новости в одну и не придумывай недостающие. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
+    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Перескажи только отобранные публикации (до трёх), в порядке дат, каждую отдельным коротким предложением. Назови дату и источник каждой публикации, используя только переданные поля. Не объединяй публикации и не придумывай недостающие. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
