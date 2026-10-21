@@ -1,0 +1,21 @@
+name: Repeated live webhook checks
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/gemini-timeouts]
+    paths:
+      - .github/workflows/repeated-live.yml
+jobs:
+  repeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check scripts/repeated-live.mjs
+      - name: Run 10 live requests
+        env:
+          ALICE_WEBHOOK_URL: https://alice-gemini-serper-template-git-fix-gemini-timeouts-ded-moroz.vercel.app/api
+        run: node scripts/repeated-live.mjs
