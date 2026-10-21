@@ -7,6 +7,7 @@ on:
       - .github/workflows/repeated-live.yml
       - api/index.js
       - tests/handler.test.mjs
+      - scripts/repeated-live.mjs
 jobs:
   repeat:
     runs-on: ubuntu-latest
