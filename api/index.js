@@ -3,7 +3,7 @@ const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
-const SERPER_TIMEOUT_MS = 1600;
+const SERPER_TIMEOUT_MS = 2400;
 const GEMINI_TIMEOUT_MS = 3000;
 const RESPONSE_RESERVE_MS = 350;
 
@@ -305,7 +305,7 @@ export default async function handler(req, res) {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
       // Give Serper time to respond while reserving enough time for Gemini.
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 1900)));
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 1100)));
     }
 
     if (isSearchIntent(text) && !searchContext) {
