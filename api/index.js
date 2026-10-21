@@ -10,20 +10,29 @@ const RESPONSE_RESERVE_MS = 350;
 const SYSTEM_PROMPT = [
   "Ты — полезный голосовой помощник в навыке Яндекс Алисы.",
   "Отвечай естественно, по-русски, ясно и так, чтобы ответ было удобно слушать.",
-  "Отвечай содержательно: раскрывай суть, объясняй причины, последствия и важные нюансы, приводи уместные примеры. Для вопросов, требующих объяснения, ориентируйся на 600–900 символов, но не растягивай простые ответы искусственно. Если пользователь просит подробно, стремись к 850–950 символам. Не используй Markdown, таблицы или длинные вступления.",
+  "Отвечай содержательно: раскрывай суть, объясняй причины, последствия и важные нюансы, приводи уместные примеры. Для вопросов, требующих объяснения, ориентируйся на 600–900 символов, но не растягивай простые ответы искусственно. Если пользователь просит подробно, можешь дать ответ до 1800 символов, его можно озвучить по частям. Не используй Markdown, таблицы или длинные вступления.",
   "Если переданы результаты интернет-поиска, опирайся на них; не выдумывай отсутствующие факты. Если результатов нет, не утверждай, что проверил интернет.",
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
 
-function aliceResponse(text, endSession = false, history = []) {
+function aliceResponse(text, endSession = false, history = [], pending = "") {
   return {
     version: "1.0",
     response: {
       text: fitAliceText(text),
       end_session: endSession
     },
-    session_state: { history }
+    session_state: { history, pending }
   };
+}
+
+function splitSpokenAnswer(value) {
+  const text = String(value || "").replace(/\\s+/g, " ").trim();
+  if (text.length <= 950) return { spoken: text, pending: "" };
+  const head = text.slice(0, 925);
+  const cut = Math.max(head.lastIndexOf(". "), head.lastIndexOf("! "), head.lastIndexOf("? "));
+  const index = cut >= 350 ? cut + 1 : head.lastIndexOf(" ") >= 350 ? head.lastIndexOf(" ") : 925;
+  return { spoken: text.slice(0, index).trim() + " Скажи «продолжай», чтобы услышать остальное.", pending: text.slice(index).trim() };
 }
 
 function fitAliceText(value) {
@@ -304,7 +313,7 @@ export default async function handler(req, res) {
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
-  const oldHistory = safeHistory(body?.state?.session?.history);
+  const oldHistory = safeHistory(body?.state?.session?.history);\n  const pending = String(body?.state?.session?.pending || "").slice(0, 8000);
 
   console.log("ENV_DIAGNOSTIC", {
     vercelEnv: process.env.VERCEL_ENV || "unknown",
@@ -344,7 +353,7 @@ export default async function handler(req, res) {
     ].slice(-MAX_HISTORY_MESSAGES);
 
     console.log("REQUEST_DIAGNOSTIC", { status: "success", totalMs: Date.now() - startedAt });
-    return res.status(200).json(aliceResponse(answer, false, history));
+    const part = splitSpokenAnswer(answer);\n    return res.status(200).json(aliceResponse(part.spoken, false, history, part.pending));
   } catch (error) {
     console.warn("REQUEST_DIAGNOSTIC", { status: "fallback", totalMs: Date.now() - startedAt, errorName: error?.name || "unknown", errorCode: error?.message || "unknown" });
     const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
@@ -352,4 +361,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, splitSpokenAnswer };
