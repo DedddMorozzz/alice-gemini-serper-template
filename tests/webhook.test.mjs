@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, splitSpokenAnswer } from '../api/index.js';
+import { aliceResponse, fitAliceText, isSearchIntent, safeHistory, splitSpokenAnswer, searchFallback } from '../api/index.js';
 
 test('only explicit find keyword triggers Serper', () => {
   assert.equal(isSearchIntent('Найди вулкан Агунг'), true);
@@ -30,4 +30,13 @@ test('long response can be continued without losing content', () => {
 });
 test('history filtering', () => {
   assert.deepEqual(safeHistory([{role:'user',text:'привет'}, {role:'invalid',text:'x'}]).map(x=>x.role), ['user']);
+});
+
+test('search fallback uses only supplied Serper results', () => {
+  const context = '1. Заголовок: Радиотелескоп обнаружил сигнал; Дата: не установлена; Описание: Сообщается о новом наблюдении; Источник: https://example.org/news';
+  const answer = searchFallback(context);
+  assert.match(answer, /Радиотелескоп обнаружил сигнал/);
+  assert.match(answer, /без дополнительной проверки/);
+  assert.equal(searchFallback(''), '');
+  assert.equal(searchFallback('Нет результатов'), '');
 });
