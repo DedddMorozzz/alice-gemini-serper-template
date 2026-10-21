@@ -1,0 +1,22 @@
+name: Live conversation memory test
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/gemini-timeouts]
+    paths:
+      - .github/workflows/context-live.yml
+      - scripts/context-live.mjs
+jobs:
+  conversation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check scripts/context-live.mjs
+      - name: Test Alice multi-turn conversation
+        env:
+          ALICE_WEBHOOK_URL: https://alice-gemini-serper-template-git-fix-gemini-timeouts-ded-moroz.vercel.app/api
+        run: node scripts/context-live.mjs
