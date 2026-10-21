@@ -103,6 +103,15 @@ function parseSearchDate(raw, now = new Date()) {
   return d.getUTCMonth() === month && d.getUTCDate() === day ? d : null;
 }
 
+function isNewsListing(item) {
+  const title = String(item.title || "").toLowerCase().trim();
+  const path = (() => { try { return new URL(item.link).pathname.replace(/\\/$/, ""); } catch { return ""; } })();
+  const genericTitle = /(?:^|[|—–:-]\\s*)(?:все новости|последние новости|новости казани и татарстана|лента новостей|главные новости|новости сегодня)(?:\\s*[|—–:-]|$)/i.test(title)
+    || /(?:все новости|лента новостей|главные новости)/i.test(title);
+  const listingPath = /^(?:\\/|\\/(?:news|novosti|news\\/|novosti\\/|latest|tag|tags|category|rubric|search))$/i.test(path);
+  return genericTitle || listingPath;
+}
+
 function selectRecentNews(items) {
   const now = new Date();
   const seen = new Set();
@@ -110,7 +119,7 @@ function selectRecentNews(items) {
     ...item,
     parsedDate: parseSearchDate(item.date, now)
   })).filter(item => {
-    if (!item.title || !item.link) return false;
+    if (!item.title || !item.link || isNewsListing(item)) return false;
     if (item.parsedDate) {
       const age = now.getTime() - item.parsedDate.getTime();
       if (age < -86400000 || age > 90 * 86400000) return false;
@@ -204,14 +213,14 @@ async function askGemini(text, history, searchContext, timeoutMs) {
   const model = String(process.env.GEMINI_MODEL || DEFAULT_MODEL).trim();
   if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("INVALID_MODEL_NAME");
 
-  const contents = safeHistory(history).map(item => ({
+  const contents = (isNewsIntent(text) ? [] : safeHistory(history)).map(item => ({
     role: item.role,
     parts: [{ text: item.text }]
   }));
 
   const newsIntent = isNewsIntent(text);
   const prompt = searchContext
-    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Перескажи только отобранные публикации (до трёх), каждую отдельным коротким предложением. Назови источник по ссылке, если он очевиден. Если дата не установлена, не называй публикацию самой свежей и не выдумывай дату. Не объединяй публикации и не придумывай недостающие. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
+    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Перескажи только отобранные публикации (до трёх), каждую отдельным коротким предложением. Назови источник по ссылке, если он очевиден. Если дата не установлена, не называй публикацию самой свежей и не выдумывай дату. Не объединяй публикации и не придумывай недостающие. Не добавляй факты из предыдущего диалога или своих знаний; если заголовок описывает ленту новостей, а не событие, пропусти его. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
