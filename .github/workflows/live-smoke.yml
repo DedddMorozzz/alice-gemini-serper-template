@@ -1,0 +1,22 @@
+name: Live webhook smoke test
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/gemini-timeouts]
+    paths:
+      - .github/workflows/live-smoke.yml
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check script syntax
+        run: node --check scripts/smoke-live.mjs
+      - name: Test real webhook
+        env:
+          ALICE_WEBHOOK_URL: https://alice-gemini-serper-template-git-fix-gemini-timeouts-ded-moroz.vercel.app/api
+        run: node scripts/smoke-live.mjs
