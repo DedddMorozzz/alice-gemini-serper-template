@@ -313,7 +313,8 @@ export default async function handler(req, res) {
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
-  const oldHistory = safeHistory(body?.state?.session?.history);\n  const pending = String(body?.state?.session?.pending || "").slice(0, 8000);
+  const oldHistory = safeHistory(body?.state?.session?.history);
+  const pending = String(body?.state?.session?.pending || "").slice(0, 8000);
 
   console.log("ENV_DIAGNOSTIC", {
     vercelEnv: process.env.VERCEL_ENV || "unknown",
@@ -331,6 +332,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    const normalized = text.toLowerCase().replace(/[.!?]+$/g, "").trim();
+    if (["продолжай", "продолжи", "дальше", "продолжение"].includes(normalized) && pending) {
+      const part = splitSpokenAnswer(pending);
+      return res.status(200).json(aliceResponse(part.spoken, false, oldHistory, part.pending));
+    }
+    if (["начни новую тему", "забудь предыдущий разговор", "очисти контекст"].includes(normalized)) {
+      return res.status(200).json(aliceResponse("Хорошо, начинаем новую тему. О чём поговорим?", false, [], ""));
+    }
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
       // Give Serper time to respond while reserving enough time for Gemini.
@@ -353,7 +362,8 @@ export default async function handler(req, res) {
     ].slice(-MAX_HISTORY_MESSAGES);
 
     console.log("REQUEST_DIAGNOSTIC", { status: "success", totalMs: Date.now() - startedAt });
-    const part = splitSpokenAnswer(answer);\n    return res.status(200).json(aliceResponse(part.spoken, false, history, part.pending));
+    const part = splitSpokenAnswer(answer);
+    return res.status(200).json(aliceResponse(part.spoken, false, history, part.pending));
   } catch (error) {
     console.warn("REQUEST_DIAGNOSTIC", { status: "fallback", totalMs: Date.now() - startedAt, errorName: error?.name || "unknown", errorCode: error?.message || "unknown" });
     const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
