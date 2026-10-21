@@ -137,6 +137,19 @@ function selectRecentNews(items) {
   return [...dated, ...undated].slice(0, 3);
 }
 
+function searchFallback(context) {
+  const entries = String(context || "").split("\n").filter(line => /^\d+\. Заголовок: /.test(line));
+  if (!entries.length) return "";
+  const parts = entries.slice(0, 2).map(line => {
+    const title = line.match(/Заголовок: (.*?); Дата:/)?.[1]?.trim() || "";
+    const snippet = line.match(/; Описание: (.*?); Источник:/)?.[1]?.trim() || "";
+    if (!title) return "";
+    const detail = snippet && !snippet.toLowerCase().includes(title.toLowerCase()) ? ". " + snippet.slice(0, 180) : "";
+    return title + detail;
+  }).filter(Boolean);
+  return parts.length ? "По результатам поиска: " + parts.join(". ") + ". Это краткие сведения из поисковой выдачи, без дополнительной проверки." : "";
+}
+
 async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
@@ -353,7 +366,16 @@ export default async function handler(req, res) {
 
     const geminiBudget = Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - RESPONSE_RESERVE_MS));
     console.log("REQUEST_STAGE", { stage: "gemini", elapsedMs: Date.now() - startedAt, remainingMs: remainingMs(), geminiBudget, searchContextChars: searchContext.length });
-    const answer = await askGemini(text, oldHistory, searchContext, geminiBudget);
+    let answer;
+    try {
+      answer = await askGemini(text, oldHistory, searchContext, geminiBudget);
+    } catch (error) {
+      const transient = error?.name === "AbortError" || ["TIME_BUDGET_EXHAUSTED", "GEMINI_REQUEST_FAILED", "GEMINI_EMPTY_RESPONSE"].includes(error?.message);
+      const fallback = searchContext && transient ? searchFallback(searchContext) : "";
+      if (!fallback) throw error;
+      console.warn("SEARCH_FALLBACK", { reason: error?.name || error?.message || "unknown", contextChars: searchContext.length });
+      answer = fallback;
+    }
 
     const history = [
       ...oldHistory,
@@ -371,4 +393,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, splitSpokenAnswer };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, splitSpokenAnswer, searchFallback };
