@@ -134,27 +134,35 @@ async function searchWeb(query, timeoutMs) {
 
   const startedAt = Date.now();
   const newsIntent = isNewsIntent(query);
+  const headers = { "X-API-KEY": key, "Content-Type": "application/json" };
+  const request = (endpoint, body) => fetchJson(
+    "https://google.serper.dev/" + endpoint,
+    { method: "POST", headers, body: JSON.stringify(body) },
+    Math.min(SERPER_TIMEOUT_MS, timeoutMs)
+  ).then(({ response, data }) => {
+    if (!response.ok) throw new Error("SERPER_HTTP_" + response.status);
+    return data;
+  });
+
   try {
-    const { response, data } = await fetchJson(
-      newsIntent ? "https://google.serper.dev/news" : "https://google.serper.dev/search",
-      {
-        method: "POST",
-        headers: {
-          "X-API-KEY": key,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: newsIntent ? 10 : 6, ...(newsIntent ? { tbs: "qdr:w" } : {}) })
-      },
-      Math.min(SERPER_TIMEOUT_MS, timeoutMs)
-    );
+    // A news-only search can legitimately return zero hits. Run a general
+    // time-filtered search in parallel to avoid losing the webhook budget.
+    const base = { q: query, gl: "ru", hl: "ru" };
+    const searches = newsIntent
+      ? await Promise.allSettled([
+          request("news", { ...base, tbs: "qdr:w" }),
+          request("search", { ...base, num: 10, tbs: "qdr:w" })
+        ])
+      : await Promise.allSettled([request("search", { ...base, num: 6 })]);
 
-    if (!response.ok) {
-      console.warn("SERPER_DIAGNOSTIC", { status: "http_error", httpStatus: response.status, durationMs: Date.now() - startedAt });
-      return "";
-    }
-
-    const rawResults = newsIntent ? (Array.isArray(data.news) && data.news.length ? data.news : data.organic) : data.organic;
-    const organic = (Array.isArray(rawResults) ? rawResults : []).map(item => ({
+    const newsData = newsIntent && searches[0].status === "fulfilled" ? searches[0].value : {};
+    const webData = newsIntent
+      ? (searches[1].status === "fulfilled" ? searches[1].value : {})
+      : (searches[0].status === "fulfilled" ? searches[0].value : {});
+    const newsRaw = Array.isArray(newsData.news) ? newsData.news : [];
+    const webRaw = Array.isArray(webData.organic) ? webData.organic : [];
+    const rawResults = newsIntent ? [...newsRaw, ...webRaw] : webRaw;
+    const organic = rawResults.map(item => ({
       title: String(item.title || "").slice(0, 180),
       snippet: String(item.snippet || "").slice(0, 350),
       link: String(item.link || "").slice(0, 240),
@@ -165,13 +173,25 @@ async function searchWeb(query, timeoutMs) {
       `${i + 1}. Заголовок: ${item.title}; Дата: ${item.parsedDate ? item.parsedDate.toISOString().slice(0, 10) : "не установлена"}; Описание: ${item.snippet}; Источник: ${item.link}`
     );
     if (!newsIntent) {
-      const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
+      const answerBox = webData.answerBox?.answer || webData.answerBox?.snippet;
       if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
     }
-    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: organic.length, responseKeys: Object.keys(data || {}).slice(0, 12), newsCount: Array.isArray(data.news) ? data.news.length : null, organicCount: Array.isArray(data.organic) ? data.organic.length : null, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null, undatedSelected: newsIntent ? selected.filter(item => !item.parsedDate).length : null, selectedTitles: newsIntent ? selected.map(item => item.title.slice(0, 100)) : null, selectedDates: newsIntent ? selected.map(item => item.date || "unknown") : null });
+    console.log("SERPER_DIAGNOSTIC", {
+      status: items.length ? "success" : "empty_results",
+      durationMs: Date.now() - startedAt,
+      newsCount: newsRaw.length,
+      organicCount: webRaw.length,
+      newsStatus: searches[0].status,
+      webStatus: newsIntent ? searches[1].status : searches[0].status,
+      newsError: searches[0].status === "rejected" ? String(searches[0].reason?.message || searches[0].reason?.name).slice(0, 90) : null,
+      webError: newsIntent && searches[1].status === "rejected" ? String(searches[1].reason?.message || searches[1].reason?.name).slice(0, 90) : null,
+      selectedNews: newsIntent ? selected.length : null,
+      selectedTitles: newsIntent ? selected.map(item => item.title.slice(0, 100)) : null,
+      selectedDates: newsIntent ? selected.map(item => item.date || "unknown") : null
+    });
     return items.length ? items.join("\n") : "";
   } catch (error) {
-    console.warn("SERPER_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
+    console.warn("SERPER_DIAGNOSTIC", { status: "error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
     return "";
   }
 }
