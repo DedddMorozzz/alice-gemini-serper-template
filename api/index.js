@@ -15,11 +15,11 @@ const SYSTEM_PROMPT = [
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
 
-function aliceResponse(text, endSession = false, history = [], pending = "") {
+function aliceResponse(text, endSession = false, history = [], pending = "", completedAnswer = false) {
   return {
     version: "1.0",
     response: {
-      text: fitAliceText(text),
+      text: fitAliceText(completedAnswer && !pending ? String(text).trim() + " Что-то ещё желаешь?" : text),
       end_session: endSession
     },
     session_state: { history, pending }
@@ -348,7 +348,7 @@ export default async function handler(req, res) {
     const normalized = text.toLowerCase().replace(/[.!?]+$/g, "").trim();
     if (["продолжай", "продолжи", "дальше", "продолжение"].includes(normalized) && pending) {
       const part = splitSpokenAnswer(pending);
-      return res.status(200).json(aliceResponse(part.spoken, false, oldHistory, part.pending));
+      return res.status(200).json(aliceResponse(part.spoken, false, oldHistory, part.pending, true));
     }
     if (["начни новую тему", "забудь предыдущий разговор", "очисти контекст"].includes(normalized)) {
       return res.status(200).json(aliceResponse("Хорошо, начинаем новую тему. О чём поговорим?", false, [], ""));
@@ -385,7 +385,7 @@ export default async function handler(req, res) {
 
     console.log("REQUEST_DIAGNOSTIC", { status: "success", totalMs: Date.now() - startedAt });
     const part = splitSpokenAnswer(answer);
-    return res.status(200).json(aliceResponse(part.spoken, false, history, part.pending));
+    return res.status(200).json(aliceResponse(part.spoken, false, history, part.pending, true));
   } catch (error) {
     console.warn("REQUEST_DIAGNOSTIC", { status: "fallback", totalMs: Date.now() - startedAt, errorName: error?.name || "unknown", errorCode: error?.message || "unknown" });
     const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
