@@ -153,7 +153,7 @@ async function searchWeb(query, timeoutMs) {
       return "";
     }
 
-    const rawResults = newsIntent ? data.news : data.organic;
+    const rawResults = newsIntent ? (Array.isArray(data.news) && data.news.length ? data.news : data.organic) : data.organic;
     const organic = (Array.isArray(rawResults) ? rawResults : []).map(item => ({
       title: String(item.title || "").slice(0, 180),
       snippet: String(item.snippet || "").slice(0, 350),
@@ -168,7 +168,7 @@ async function searchWeb(query, timeoutMs) {
       const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
       if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
     }
-    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: organic.length, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null, undatedSelected: newsIntent ? selected.filter(item => !item.parsedDate).length : null, selectedTitles: newsIntent ? selected.map(item => item.title.slice(0, 100)) : null, selectedDates: newsIntent ? selected.map(item => item.date || "unknown") : null });
+    console.log("SERPER_DIAGNOSTIC", { status: items.length ? "success" : "empty_results", durationMs: Date.now() - startedAt, resultsCount: organic.length, responseKeys: Object.keys(data || {}).slice(0, 12), newsCount: Array.isArray(data.news) ? data.news.length : null, organicCount: Array.isArray(data.organic) ? data.organic.length : null, datedResults: organic.filter(item => parseSearchDate(item.date)).length, selectedNews: newsIntent ? selected.length : null, undatedSelected: newsIntent ? selected.filter(item => !item.parsedDate).length : null, selectedTitles: newsIntent ? selected.map(item => item.title.slice(0, 100)) : null, selectedDates: newsIntent ? selected.map(item => item.date || "unknown") : null });
     return items.length ? items.join("\n") : "";
   } catch (error) {
     console.warn("SERPER_DIAGNOSTIC", { status: error?.name === "AbortError" ? "timeout" : "network_error", durationMs: Date.now() - startedAt, errorName: error?.name || "unknown" });
