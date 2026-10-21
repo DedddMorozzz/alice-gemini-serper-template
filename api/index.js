@@ -47,7 +47,7 @@ function fitAliceText(value) {
 }
 
 function isSearchIntent(text) {
-  return /(?:^|[^а-яёa-z])найди(?=\\s|[.,!?;:]|$)/i.test(String(text || ""));
+  return String(text || "").toLowerCase().split(/[^а-яёa-z]+/).includes("найди");
 }
 
 function safeHistory(history) {
@@ -103,15 +103,6 @@ function parseSearchDate(raw, now = new Date()) {
   return d.getUTCMonth() === month && d.getUTCDate() === day ? d : null;
 }
 
-function isNewsListing(item) {
-  const title = String(item.title || "").toLowerCase().trim();
-  const path = (() => { try { return new URL(item.link).pathname.replace(/\\/$/, ""); } catch { return ""; } })();
-  const genericTitle = /(?:^|[|—–:-]\\s*)(?:все новости|последние новости|новости казани и татарстана|лента новостей|главные новости|новости сегодня)(?:\\s*[|—–:-]|$)/i.test(title)
-    || /(?:все новости|лента новостей|главные новости)/i.test(title);
-  const listingPath = /^(?:\\/|\\/(?:news|novosti|news\\/|novosti\\/|latest|tag|tags|category|rubric|search))$/i.test(path);
-  return genericTitle || listingPath;
-}
-
 function selectRecentNews(items) {
   const now = new Date();
   const seen = new Set();
@@ -119,7 +110,7 @@ function selectRecentNews(items) {
     ...item,
     parsedDate: parseSearchDate(item.date, now)
   })).filter(item => {
-    if (!item.title || !item.link || isNewsListing(item)) return false;
+    if (!item.title || !item.link) return false;
     if (item.parsedDate) {
       const age = now.getTime() - item.parsedDate.getTime();
       if (age < -86400000 || age > 90 * 86400000) return false;
