@@ -10,7 +10,7 @@ const RESPONSE_RESERVE_MS = 350;
 const SYSTEM_PROMPT = [
   "Ты — полезный голосовой помощник в навыке Яндекс Алисы.",
   "Отвечай естественно, по-русски, кратко и так, чтобы ответ было удобно слушать.",
-  "Обычно используй 1–3 коротких предложения. Не используй Markdown, таблицы, списки с символами или длинные вступления.",
+  "Обычно используй 1–3 коротких предложения. Для запроса нескольких новостей допускается по одному-двум предложениям на каждую. Не используй Markdown, таблицы или длинные вступления.",
   "Если вопрос требует актуальных данных и переданы результаты поиска, опирайся на них; не выдумывай отсутствующие факты.",
   "Если не знаешь ответа, честно скажи об этом."
 ].join(" ");
@@ -84,7 +84,7 @@ async function searchWeb(query, timeoutMs) {
           "X-API-KEY": key,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 3 })
+        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: 6 })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
@@ -95,12 +95,13 @@ async function searchWeb(query, timeoutMs) {
     }
 
     const items = (Array.isArray(data.organic) ? data.organic : [])
-      .slice(0, 3)
+      .slice(0, 6)
       .map((item, i) => {
         const title = String(item.title || "").slice(0, 180);
         const snippet = String(item.snippet || "").slice(0, 350);
         const link = String(item.link || "").slice(0, 240);
-        return `${i + 1}. ${title}: ${snippet} ${link}`.trim();
+        const date = String(item.date || "").slice(0, 80);
+        return `${i + 1}. Заголовок: ${title}; Дата: ${date || "не указана"}; Описание: ${snippet}; Источник: ${link}`.trim();
       });
 
     const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
@@ -126,8 +127,9 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     parts: [{ text: item.text }]
   }));
 
+  const newsIntent = /новост|news/i.test(text);
   const prompt = searchContext
-    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\nИспользуй их только там, где они относятся к вопросу.`
+    ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\n${newsIntent ? "Это запрос на подборку новостей. Представь до трёх РАЗНЫХ подтверждённых публикаций, каждую отдельным коротким предложением. Указывай дату и источник только если они присутствуют в результатах. Не объединяй три новости в одну и не придумывай недостающие. Если подходящих публикаций меньше трёх, прямо скажи об этом. Общая длина до 850 символов." : "Используй результаты только там, где они относятся к вопросу."}`
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
