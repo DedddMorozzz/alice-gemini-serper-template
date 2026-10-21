@@ -136,14 +136,14 @@ async function searchWeb(query, timeoutMs) {
   const newsIntent = isNewsIntent(query);
   try {
     const { response, data } = await fetchJson(
-      "https://google.serper.dev/search",
+      newsIntent ? "https://google.serper.dev/news" : "https://google.serper.dev/search",
       {
         method: "POST",
         headers: {
           "X-API-KEY": key,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: newsIntent ? 10 : 6 })
+        body: JSON.stringify({ q: query, gl: "ru", hl: "ru", num: newsIntent ? 10 : 6, ...(newsIntent ? { tbs: "qdr:w" } : {}) })
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
@@ -153,7 +153,8 @@ async function searchWeb(query, timeoutMs) {
       return "";
     }
 
-    const organic = (Array.isArray(data.organic) ? data.organic : []).map(item => ({
+    const rawResults = newsIntent ? data.news : data.organic;
+    const organic = (Array.isArray(rawResults) ? rawResults : []).map(item => ({
       title: String(item.title || "").slice(0, 180),
       snippet: String(item.snippet || "").slice(0, 350),
       link: String(item.link || "").slice(0, 240),
