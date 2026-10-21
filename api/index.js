@@ -412,7 +412,7 @@ export default async function handler(req, res) {
   } catch (error) {
     console.warn("REQUEST_DIAGNOSTIC", { status: "fallback", totalMs: Date.now() - startedAt, errorName: error?.name || "unknown", errorCode: error?.message || "unknown" });
     const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
-    return res.status(200).json(persistentResponse(errorForUser(safeError), false, oldHistory));
+    return res.status(200).json(persistentResponse(errorForUser(safeError), false, oldHistory, "", false, body));
   }
 }
 
