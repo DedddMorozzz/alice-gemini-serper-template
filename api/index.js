@@ -67,6 +67,29 @@ function safeHistory(history) {
     .map(item => ({ role: item.role, text: item.text.slice(0, MAX_HISTORY_MESSAGE_CHARS) }));
 }
 
+// Yandex persistent states are limited to 1 KB each (UTF-8 JSON).
+function compactPersistentHistory(history) {
+  const messages = safeHistory(history).slice(-4);
+  const out = [];
+  for (const item of messages) out.push({ role: item.role, text: item.text.slice(0, 180) });
+  while (out.length && Buffer.byteLength(JSON.stringify({ history: out }), "utf8") > 950) {
+    if (out.length > 2) out.shift();
+    else {
+      const longest = out.reduce((a, b) => a.text.length >= b.text.length ? a : b);
+      longest.text = longest.text.slice(0, Math.max(0, longest.text.length - 20));
+    }
+  }
+  return out;
+}
+
+function persistentResponse(answer, endSession, history, pending, completedAnswer, body) {
+  const result = aliceResponse(answer, endSession, history, pending, completedAnswer);
+  const saved = { history: compactPersistentHistory(history) };
+  if (body?.session?.user?.user_id) result.user_state_update = saved;
+  else if (body?.session?.application?.application_id) result.application_state = saved;
+  return result;
+}
+
 async function fetchJson(url, options, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(100, timeoutMs));
@@ -326,7 +349,7 @@ export default async function handler(req, res) {
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
-  const oldHistory = safeHistory(body?.state?.session?.history);
+  const oldHistory = safeHistory(body?.state?.session?.history?.length ? body.state.session.history : (body?.state?.user?.history || body?.state?.application?.history));
   const pending = String(body?.state?.session?.pending || "").slice(0, 8000);
 
   console.log("ENV_DIAGNOSTIC", {
@@ -337,10 +360,10 @@ export default async function handler(req, res) {
   });
 
   if (!text) {
-    return res.status(200).json(aliceResponse(
+    return res.status(200).json(persistentResponse(
       "Привет! Я могу ответить на вопрос или найти актуальную информацию. Что хочешь узнать?",
       false,
-      oldHistory
+      oldHistory, "", false, body
     ));
   }
 
@@ -348,10 +371,10 @@ export default async function handler(req, res) {
     const normalized = text.toLowerCase().replace(/[.!?]+$/g, "").trim();
     if (["продолжай", "продолжи", "дальше", "продолжение"].includes(normalized) && pending) {
       const part = splitSpokenAnswer(pending);
-      return res.status(200).json(aliceResponse(part.spoken, false, oldHistory, part.pending, true));
+      return res.status(200).json(persistentResponse(part.spoken, false, oldHistory, part.pending, true, body));
     }
     if (["начни новую тему", "забудь предыдущий разговор", "очисти контекст"].includes(normalized)) {
-      return res.status(200).json(aliceResponse("Хорошо, начинаем новую тему. О чём поговорим?", false, [], ""));
+      return res.status(200).json(persistentResponse("Хорошо, начинаем новую тему. О чём поговорим?", false, [], "", false, body));
     }
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
@@ -361,7 +384,7 @@ export default async function handler(req, res) {
 
     if (isSearchIntent(text) && !searchContext) {
       console.warn("SEARCH_UNAVAILABLE", { elapsedMs: Date.now() - startedAt });
-      return res.status(200).json(aliceResponse("Не удалось получить актуальные данные из интернета. Попробуй повторить запрос позже.", false, oldHistory));
+      return res.status(200).json(persistentResponse("Не удалось получить актуальные данные из интернета. Попробуй повторить запрос позже.", false, oldHistory, "", false, body));
     }
 
     const geminiBudget = Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - RESPONSE_RESERVE_MS));
@@ -385,11 +408,11 @@ export default async function handler(req, res) {
 
     console.log("REQUEST_DIAGNOSTIC", { status: "success", totalMs: Date.now() - startedAt });
     const part = splitSpokenAnswer(answer);
-    return res.status(200).json(aliceResponse(part.spoken, false, history, part.pending, true));
+    return res.status(200).json(persistentResponse(part.spoken, false, history, part.pending, true, body));
   } catch (error) {
     console.warn("REQUEST_DIAGNOSTIC", { status: "fallback", totalMs: Date.now() - startedAt, errorName: error?.name || "unknown", errorCode: error?.message || "unknown" });
     const safeError = error?.name === "AbortError" ? new Error("TIME_BUDGET_EXHAUSTED") : error;
-    return res.status(200).json(aliceResponse(errorForUser(safeError), false, oldHistory));
+    return res.status(200).json(persistentResponse(errorForUser(safeError), false, oldHistory));
   }
 }
 
